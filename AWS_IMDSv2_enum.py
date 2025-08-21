@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import requests, os, base64
+import requests, os
 
 IMDS_HOST = "169.254.169.254"
 BASE = f"http://{IMDS_HOST}/latest/"
@@ -13,10 +13,7 @@ def save(path, content):
     os.makedirs(OUTDIR, exist_ok=True)
     fname = os.path.join(OUTDIR, safe_filename(path))
     with open(fname, "wb") as f:
-        if isinstance(content, str):
-            f.write(content.encode())
-        else:
-            f.write(content)
+        f.write(content.encode() if isinstance(content, str) else content)
 
 def get_token(ttl=21600):
     r = requests.put(
@@ -35,23 +32,21 @@ def get(path):
     return r
 
 def is_dir_listing(resp):
-    return resp.headers.get("Content-Type", "").startswith("text/plain") and "\n" in resp.text
+    return resp.headers.get("Content-Type", "").startswith("text/plain") and resp.text.strip().endswith("/")
 
 def crawl(path):
     r = get(path)
     if r is None:
         return
-    if path.endswith("/") and is_dir_listing(r):
+    # directory
+    if path.endswith("/") and r.text and "\n" in r.text:
         for item in filter(None, (x.strip() for x in r.text.splitlines())):
             child_path = path + item
             if item.endswith("/") and not child_path.endswith("/"):
                 child_path += "/"
             crawl(child_path)
     else:
-        try:
-            save(path, r.text)
-        except UnicodeDecodeError:
-            save(path, r.content)
+        save(path, r.text if r.encoding else r.content)
 
 def main():
     global HEADERS
