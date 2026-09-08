@@ -48,9 +48,12 @@ type repo struct {
 	FullName string `json:"full_name"`
 	CloneURL string `json:"clone_url"`
 	SSHURL   string `json:"ssh_url"`
-	Private  bool   `json:"private"`
-	Fork     bool   `json:"fork"`
-	Archived bool   `json:"archived"`
+	Owner    struct {
+		Login string `json:"login"`
+	} `json:"owner"`
+	Private  bool `json:"private"`
+	Fork     bool `json:"fork"`
+	Archived bool `json:"archived"`
 }
 
 type opts struct {
@@ -230,6 +233,17 @@ func (c *client) whoami() string {
 //	/orgs/X/repos  - org repos, private ones included if the token can see them
 //	/users/X/repos - public repos only, always, even with a token
 func (c *client) listRepos(owner string) []repo {
+	// "@me" means every repo the token can see, across all owners: your own,
+	// every org you are in, and anything you are a collaborator on. This is
+	// the closest match to what you see logged in to the website.
+	if owner == "@me" {
+		if c.token == "" {
+			die("@me needs a token")
+		}
+		fmt.Println("[*] listing every repo this token can see (all owners)")
+		r, _ := c.paginate(api + "/user/repos?per_page=100&affiliation=owner,collaborator,organization_member")
+		return r
+	}
 	if c.token != "" && strings.EqualFold(owner, c.whoami()) {
 		fmt.Printf("[*] %s is the authenticated user, using /user/repos (includes private)\n", owner)
 		// note: the api rejects affiliation and type together with a 422
@@ -341,7 +355,8 @@ func main() {
 	flag.BoolVar(&o.dryRun, "dry-run", false, "show what would happen, clone nothing")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [flags] <user-or-org>\n\nflags:\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s [flags] <user-or-org|@me>\n\n"+
+			"  @me lists every repo the token can see, across all owners\n\nflags:\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -404,9 +419,9 @@ func main() {
 		return
 	}
 
-	dest := filepath.Join(expand(o.dest), owner)
-	if err := os.MkdirAll(dest, 0o755); err != nil {
-		die("creating %s: %v", dest, err)
+	root := expand(o.dest)
+	if owner != "@me" {
+		root = filepath.Join(root, owner)
 	}
 	gitToken := token
 	if o.ssh {
@@ -430,7 +445,16 @@ func main() {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			res := syncOne(r, dest, env, o)
+			// group by the repo's real owner; for a single-owner run this is
+			// just the one directory, for @me it keeps owners separate
+			dir := root
+			if owner == "@me" {
+				dir = filepath.Join(root, r.Owner.Login)
+			}
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				die("creating %s: %v", dir, err)
+			}
+			res := syncOne(r, dir, env, o)
 
 			mu.Lock()
 			defer mu.Unlock()
@@ -444,7 +468,7 @@ func main() {
 	}
 	wg.Wait()
 
-	fmt.Printf("[*] done: %d ok, %d failed -> %s\n", ok, failed, dest)
+	fmt.Printf("[*] done: %d ok, %d failed -> %s\n", ok, failed, root)
 	if failed > 0 {
 		os.Exit(1)
 	}
