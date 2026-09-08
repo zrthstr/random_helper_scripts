@@ -35,6 +35,9 @@ import (
 
 const api = "https://api.github.com"
 
+// version is stamped in at build time by the Makefile (-ldflags -X).
+var version = "dev"
+
 type repo struct {
 	Name     string `json:"name"`
 	FullName string `json:"full_name"`
@@ -290,11 +293,17 @@ func main() {
 	flag.IntVar(&o.jobs, "jobs", 4, "parallel git processes")
 	flag.BoolVar(&o.listOnly, "list-only", false, "print the repo list and exit")
 	flag.BoolVar(&o.dryRun, "dry-run", false, "show what would happen, clone nothing")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: %s [flags] <user-or-org>\n\nflags:\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("gh-mass-clone %s\n", version)
+		return
+	}
 
 	if flag.NArg() != 1 {
 		flag.Usage()
