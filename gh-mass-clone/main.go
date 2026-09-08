@@ -192,7 +192,8 @@ func (c *client) whoami() string {
 func (c *client) listRepos(owner string) []repo {
 	if c.token != "" && strings.EqualFold(owner, c.whoami()) {
 		fmt.Printf("[*] %s is the authenticated user, using /user/repos (includes private)\n", owner)
-		r, _ := c.paginate(api + "/user/repos?per_page=100&affiliation=owner&type=all")
+		// note: the api rejects affiliation and type together with a 422
+		r, _ := c.paginate(api + "/user/repos?per_page=100&affiliation=owner")
 		return r
 	}
 	if r, found := c.paginate(api + "/orgs/" + owner + "/repos?per_page=100&type=all"); found {
