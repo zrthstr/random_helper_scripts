@@ -3,9 +3,14 @@
 // MIT License
 // Copyright (c) 2026, zrthstr
 //
-// Go port of gh_mass_clone.py. Stdlib only, so `go build` needs no network and
-// the result is a single static binary you can scp onto a box that has no
-// python or no requests.
+// Stdlib only, so `go build` needs no network and the result is a single
+// static binary you can scp onto a box that has neither python nor requests.
+//
+// Usage:
+//
+//	gh-mass-clone -list-only some-org
+//	gh-mass-clone -dest ~/backup -mirror some-org
+//	gh-mass-clone -no-forks -no-archived -jobs 8 some-org
 //
 // Auth: GITHUB_TOKEN or GH_TOKEN, or -token-file, or whatever `gh auth token`
 // hands back. Deliberately no -token flag: argv is world-readable via /proc.
