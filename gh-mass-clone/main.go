@@ -71,25 +71,54 @@ func die(format string, a ...any) {
 	os.Exit(1)
 }
 
-func getToken(tokenFile string) string {
+// defaultTokenPath is checked when no token is given explicitly, so the common
+// case needs no flag and no token in the environment.
+func defaultTokenPath() string {
+	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
+		return filepath.Join(dir, "gh-mass-clone", "token")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".config", "gh-mass-clone", "token")
+}
+
+func readTokenFile(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(b)), nil
+}
+
+// getToken resolves a token from, in order: -token-file, $GITHUB_TOKEN or
+// $GH_TOKEN, ~/.config/gh-mass-clone/token, then whatever `gh auth token` has.
+// Returns the token and a short description of where it came from.
+func getToken(tokenFile string) (string, string) {
 	if tokenFile != "" {
-		b, err := os.ReadFile(expand(tokenFile))
+		tok, err := readTokenFile(expand(tokenFile))
 		if err != nil {
 			die("reading token file: %v", err)
 		}
-		return strings.TrimSpace(string(b))
+		return tok, tokenFile
 	}
 	for _, v := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
 		if s := strings.TrimSpace(os.Getenv(v)); s != "" {
-			return s
+			return s, "$" + v
 		}
 	}
-	// fall back to whatever the gh cli already has
-	out, err := exec.Command("gh", "auth", "token").Output()
-	if err == nil {
-		return strings.TrimSpace(string(out))
+	if p := defaultTokenPath(); p != "" {
+		if tok, err := readTokenFile(p); err == nil && tok != "" {
+			return tok, p
+		}
 	}
-	return ""
+	if out, err := exec.Command("gh", "auth", "token").Output(); err == nil {
+		if tok := strings.TrimSpace(string(out)); tok != "" {
+			return tok, "gh auth token"
+		}
+	}
+	return "", ""
 }
 
 func expand(p string) string {
@@ -143,9 +172,20 @@ func (c *client) paginate(url string) (out []repo, found bool) {
 			resp.Body.Close()
 			return nil, false
 		}
+		if resp.StatusCode == 401 {
+			resp.Body.Close()
+			die("token rejected (401); check it is valid and not expired")
+		}
 		if resp.StatusCode != 200 {
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 			resp.Body.Close()
+			// the api puts the useful part in .message; fall back to raw body
+			var e struct {
+				Message string `json:"message"`
+			}
+			if json.Unmarshal(body, &e) == nil && e.Message != "" {
+				die("api returned %s: %s", resp.Status, e.Message)
+			}
 			die("api returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 		}
 		var page []repo
@@ -290,7 +330,7 @@ func syncOne(r repo, dest string, env []string, o opts) result {
 func main() {
 	var o opts
 	flag.StringVar(&o.dest, "dest", ".", "destination dir; repos land in <dest>/<owner>/")
-	flag.StringVar(&o.tokenFile, "token-file", "", "read token from this file instead of the environment")
+	flag.StringVar(&o.tokenFile, "token-file", "", "read token from this file (default "+defaultTokenPath()+")")
 	flag.BoolVar(&o.ssh, "ssh", false, "clone over SSH instead of HTTPS+token")
 	flag.BoolVar(&o.mirror, "mirror", false, "bare --mirror clones (what you want for backups)")
 	flag.BoolVar(&o.shallow, "shallow", false, "--depth 1 (ignored with -mirror)")
@@ -317,9 +357,11 @@ func main() {
 	}
 	owner := flag.Arg(0)
 
-	token := getToken(o.tokenFile)
+	token, tokenSrc := getToken(o.tokenFile)
 	if token == "" {
 		fmt.Fprintln(os.Stderr, "[!] no token found; only public repos will be visible")
+	} else {
+		fmt.Printf("[*] token from %s\n", tokenSrc)
 	}
 
 	c := &client{http: &http.Client{Timeout: 30 * time.Second}, token: token}
