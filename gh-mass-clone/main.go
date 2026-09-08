@@ -233,9 +233,13 @@ func (c *client) whoami() string {
 //	/orgs/X/repos  - org repos, private ones included if the token can see them
 //	/users/X/repos - public repos only, always, even with a token
 func (c *client) listRepos(owner string) []repo {
-	// "@me" means every repo the token can see, across all owners: your own,
-	// every org you are in, and anything you are a collaborator on. This is
-	// the closest match to what you see logged in to the website.
+	// "@me" means every repo you have a personal relationship with, across all
+	// owners: your own, plus anything you can reach through org membership or
+	// as a collaborator.
+	//
+	// It is NOT the full contents of an org. /user/repos omits an org's public
+	// repos, because reading those needs no membership, so @me undercounts an
+	// org by exactly its public repos. Pass the org name to get all of it.
 	if owner == "@me" {
 		if c.token == "" {
 			die("@me needs a token")
